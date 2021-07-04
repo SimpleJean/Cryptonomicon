@@ -2,76 +2,7 @@
   <div class="container mx-auto flex flex-col items-center bg-gray-100 p-4">
     <div class="container">
       <div class="w-full my-4"></div>
-      <section>
-        <div class="flex">
-          <div class="max-w-xs">
-            <label for="wallet" class="block text-sm font-medium text-gray-700"
-              >Тикер</label
-            >
-            <div class="mt-1 relative rounded-md shadow-md">
-              <input
-                v-model="ticker"
-                v-on:keydown.enter="add"
-                type="text"
-                name="wallet"
-                id="wallet"
-                class="
-                  block
-                  w-full
-                  pr-10
-                  border-gray-300
-                  text-gray-900
-                  focus:outline-none
-                  focus:ring-gray-500
-                  focus:border-gray-500
-                  sm:text-sm
-                  rounded-md
-                "
-                placeholder="Например DOGE"
-              />
-            </div>
-          </div>
-        </div>
-        <button
-          @click="add"
-          type="button"
-          class="
-            my-4
-            inline-flex
-            items-center
-            py-2
-            px-4
-            border border-transparent
-            shadow-sm
-            text-sm
-            leading-4
-            font-medium
-            rounded-full
-            text-white
-            bg-gray-600
-            hover:bg-gray-700
-            transition-colors
-            duration-300
-            focus:outline-none
-            focus:ring-2 focus:ring-offset-2 focus:ring-gray-500
-          "
-        >
-          <!-- Heroicon name: solid/mail -->
-          <svg
-            class="-ml-0.5 mr-2 h-6 w-6"
-            xmlns="http://www.w3.org/2000/svg"
-            width="30"
-            height="30"
-            viewBox="0 0 24 24"
-            fill="#ffffff"
-          >
-            <path
-              d="M13 7h-2v4H7v2h4v4h2v-4h4v-2h-4V7zm-1-5C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"
-            ></path>
-          </svg>
-          Добавить
-        </button>
-      </section>
+      <add-ticker @add-ticker="add" :disabled="toManyTickersAdded" />
       <template v-if="tickers.length">
         <hr class="w-full border-t border-gray-600 my-4" />
         <div>
@@ -200,7 +131,10 @@
         <h3 class="text-lg leading-6 font-medium text-gray-900 my-8">
           {{ selectedTicker.name }} - USD
         </h3>
-        <div class="flex items-end border-gray-600 border-b border-l h-64">
+        <div
+          class="flex items-end border-gray-600 border-b border-l h-64"
+          ref="graph"
+        >
           <div
             v-for="(bar, idx) in normalizedGraph"
             :key="idx"
@@ -241,18 +175,27 @@
 </template>
 
 <script>
-import { subscribeToTicker } from './api';
+import { subscribeToTicker, unsubscribeFromTicker } from './api';
+import AddTicker from './Components/AddTicker.vue';
 
 export default {
   name: 'App',
+
+  components: {
+    AddTicker,
+  },
+
   data() {
     return {
-      ticker: '',
+      filter: '',
+
       tickers: [],
       selectedTicker: null,
+
       graph: [],
+      maxGraphElements: 1,
+
       page: 1,
-      filter: '',
     };
   },
   created() {
@@ -280,13 +223,27 @@ export default {
     if (tickersData) {
       this.tickers = JSON.parse(tickersData);
       this.tickers.forEach((ticker) => {
-        subscribeToTicker(ticker.name, () => {});
+        subscribeToTicker(ticker.name, (newPrice) => {
+          this.updateTicker(ticker.name, newPrice);
+        });
       });
     }
     setInterval(this.updateTickers, 5000);
   },
 
+  mounted() {
+    window.addEventListener('resize', this.calculateMaxGraphElements);
+  },
+
+  beforeMount() {
+    window.removeEventListener('resize', this.calculateMaxGraphElements);
+  },
+
   computed: {
+    toManyTickersAdded() {
+      return this.tickers.length > 4;
+    },
+
     startIndex() {
       return (this.page - 1) * 6;
     },
@@ -326,34 +283,45 @@ export default {
   },
 
   methods: {
+    calculateMaxGraphElements() {
+      if (!this.$refs.graph) {
+        return;
+      }
+      this.maxGraphElements = this.$refs.graph.clientWidth / 38;
+    },
+
+    updateTicker(tickerName, price) {
+      this.tickers
+        .filter((t) => t.name === tickerName)
+        .forEach((t) => {
+          if (t === this.selectedTicker) {
+            this.graph.push(price);
+            while (this.graph.length > this.maxGraphElements) {
+              this.graph.shift();
+            }
+          }
+          t.price = price;
+        });
+    },
+
     formatPrice(price) {
       if (price === '-') {
         return price;
       }
       return price > 1 ? price.toFixed(2) : price.toPrecision(2);
     },
-
-    async updateTickers() {
-      // if (!this.tickers.length) {
-      //   return;
-      // }
-
-      // this.tickers.forEach((ticker) => {
-      //   const price = exchangeData[ticker.name.toUpperCase()];
-
-      //   ticker.price = price ?? '-';
-      // });
-    },
-
-    add() {
+    add(ticker) {
       const currentTicker = {
-        name: this.ticker,
+        name: ticker,
         price: '-',
       };
       this.tickers = [...this.tickers, currentTicker];
       this.filter = '';
-      subscribeToTicker(this.ticker.name, () => {});
+      subscribeToTicker(currentTicker.name, (newPrice) =>
+        this.updateTicker(currentTicker.name, newPrice)
+      );
     },
+    //detele add method
 
     select(ticker) {
       this.selectedTicker = ticker;
@@ -364,15 +332,20 @@ export default {
       if (this.selectedTicker === tickerToRemove) {
         this.selectedTicker = null;
       }
+      unsubscribeFromTicker(tickerToRemove.name);
     },
   },
 
   watch: {
     selectedTicker() {
       this.graph = [];
+
+      this.$nextTick().then(this.calculateMaxGraphElements);
     },
 
-    tickers() {
+    tickers(newValue, oldValue) {
+      console.log(newValue === oldValue);
+
       localStorage.setItem('cryptonomicon-list', JSON.stringify(this.tickers));
     },
 
